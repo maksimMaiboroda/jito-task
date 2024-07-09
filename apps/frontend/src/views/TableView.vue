@@ -1,20 +1,71 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
-import LoadingIndicator from '../components/LoadingIndicator.vue'
-import PokerCard from '../components/PokerCard.vue'
-import { getTable } from '../api'
+import { computed, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { useQuery } from '@tanstack/vue-query';
+import LoadingIndicator from '../components/LoadingIndicator.vue';
+import PokerCard from '../components/PokerCard.vue';
+import { getTable, askAIForRecommendation } from '../api';
+import { CardGroup, OddsCalculator } from 'poker-tools';
 
-const props = defineProps<{
-  id: number
-}>()
+const route = useRoute();
+const tableId = computed(() => route.params.id);
 
-const { data: table, isPending } = useQuery({
-  queryKey: ['table', props.id],
-  queryFn: () => getTable(props.id),
-  refetchInterval: 1000
-})
+const { data: table, isPending, refetch } = useQuery({
+  queryKey: ['table', tableId],
+  queryFn: () => getTable(Number(tableId.value)),
+  enabled: false
+});
+
+watch(tableId, (newId) => {
+  if (newId) {
+    refetch();
+  }
+}, { immediate: true }); 
+
+const winningCards = computed(() => {
+  if (table?.value && table.value.communityCards.length === 5) {
+    const playerCards = table.value.holeCards
+      .filter(cards => cards !== null && cards.length === 2)
+      .map(cards => CardGroup.fromString(cards!.join('')));
+
+    const board = CardGroup.fromString(table.value.communityCards.join(''));
+
+    const result = OddsCalculator.calculateWinner(playerCards, board);
+
+    if (result.length > 0) {
+      const winningIndexes = result[0].map(hand => hand.index);
+      const winningCards = [];
+      for (const index of winningIndexes) {
+        if (table.value.holeCards[index]) {
+          winningCards.push(...table.value.holeCards[index]);
+        }
+      }
+      return winningCards;
+    }
+  }
+  return [];
+});
+
+
+const askAI = async () => {
+  try {
+    if (table?.value) {
+      console.log({table: table.value});
+      const aiStrategy = await askAIForRecommendation(table.value.id);
+
+      console.log({aiStrategy});
+      refetch();
+      alert(`AI Strategy: ${aiStrategy}`);
+    } else {
+      alert('Table data is not available yet');
+    }
+  } catch (error) {
+    console.error('Error asking AI for recommendation:', error);
+    alert('Failed to get AI recommendation');
+  }
+};
 </script>
+
 <template>
   <div class="p-2">
     <LoadingIndicator v-if="isPending" class="ml-auto mr-auto pt-4" />
@@ -30,7 +81,10 @@ const { data: table, isPending } = useQuery({
           >
             <template v-if="index === 1">
               <div class="absolute top-0 right-0 z-10 leading-[0]">
-                <button class="bg-blue-500 text-white p-1 text-xs rounded-tr-lg rounded-bl-lg">
+                <button
+                  class="bg-blue-500 text-white p-1 text-xs rounded-tr-lg rounded-bl-lg"
+                  @click="askAI"
+                >
                   Ask AI
                 </button>
               </div>
@@ -41,6 +95,7 @@ const { data: table, isPending } = useQuery({
                 v-for="card in table.holeCards[index - 1]"
                 :key="card"
                 :card="card"
+                :class="{'opacity-30': winningCards.includes(card)}"
                 class="transition-opacity duration-1000"
               />
             </template>
@@ -56,6 +111,7 @@ const { data: table, isPending } = useQuery({
             v-for="card in table.communityCards"
             :key="card"
             :card="card"
+            :class="{'opacity-30': !winningCards.includes(card)}"
             class="transition-opacity duration-1000"
           />
         </template>
@@ -71,6 +127,7 @@ const { data: table, isPending } = useQuery({
                 v-for="card in table.holeCards[index - 1 + 4]"
                 :key="card"
                 :card="card"
+                :class="{'opacity-30': !winningCards.includes(card)}"
                 class="transition-opacity duration-1000"
               />
             </template>
